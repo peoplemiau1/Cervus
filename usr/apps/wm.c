@@ -8,9 +8,9 @@
 
 static gui_window_t windows[MAX_WINDOWS];
 static int win_count = 0;
-static int active_idx = 0;
 static int dragging = 0;
 static int drag_ox = 0, drag_oy = 0;
+static int prev_btn_l = 0;
 
 static int add_window(int x, int y, int w, int h, uint32_t bg, uint32_t title_c, const char *name) {
     if (win_count >= MAX_WINDOWS) return -1;
@@ -23,13 +23,27 @@ static int add_window(int x, int y, int w, int h, uint32_t bg, uint32_t title_c,
     return win_count++;
 }
 
+static int point_in_rect(int px, int py, int rx, int ry, int rw, int rh) {
+    return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
+}
+
 static int hit_test(int mx, int my) {
     for (int i = win_count - 1; i >= 0; i--) {
         gui_window_t *w = &windows[i];
-        if (mx >= w->x && mx < w->x + w->w && my >= w->y && my < w->y + w->h)
+        if (point_in_rect(mx, my, w->x, w->y, w->w, w->h))
             return i;
     }
     return -1;
+}
+
+static int hit_close(int mx, int my, int idx) {
+    gui_window_t *w = &windows[idx];
+    return point_in_rect(mx, my, w->x + w->w - 28, w->y + 2, 26, 24);
+}
+
+static int hit_titlebar(int mx, int my, int idx) {
+    gui_window_t *w = &windows[idx];
+    return point_in_rect(mx, my, w->x, w->y, w->w - 28, 28);
 }
 
 static void bring_to_front(int idx) {
@@ -38,12 +52,13 @@ static void bring_to_front(int idx) {
     for (int i = idx; i < win_count - 1; i++)
         windows[i] = windows[i + 1];
     windows[win_count - 1] = tmp;
-    active_idx = win_count - 1;
 }
 
-static int hit_close_button(int mx, int my, gui_window_t *w) {
-    return (mx >= w->x + w->w - 24 && mx < w->x + w->w - 4 &&
-            my >= w->y + 4 && my < w->y + 24);
+static void close_window(int idx) {
+    if (idx < 0 || idx >= win_count) return;
+    for (int i = idx; i < win_count - 1; i++)
+        windows[i] = windows[i + 1];
+    win_count--;
 }
 
 int main(int argc, char **argv) {
@@ -69,35 +84,39 @@ int main(int argc, char **argv) {
     add_window(350, 100, 350, 250, 0xE8F0E8, 0x228844, "Editor");
 
     int running = 1;
-    int prev_btn_l = 0;
 
     while (running) {
         int mx = 0, my = 0, btn_l = 0, btn_r = 0;
         gui_mouse_poll(&mx, &my, &btn_l, &btn_r);
 
-        if (btn_l && !prev_btn_l) {
+        int just_pressed = (btn_l && !prev_btn_l);
+        int just_released = (!btn_l && prev_btn_l);
+
+        if (just_pressed) {
             int hit = hit_test(mx, my);
             if (hit >= 0) {
-                if (hit_close_button(mx, my, &windows[hit])) {
-                    for (int i = hit; i < win_count - 1; i++)
-                        windows[i] = windows[i + 1];
-                    win_count--;
+                if (hit_close(mx, my, hit)) {
+                    close_window(hit);
+                    dragging = 0;
                     if (win_count == 0) { running = 0; break; }
-                    active_idx = win_count - 1;
                 } else {
                     bring_to_front(hit);
-                    dragging = 1;
-                    drag_ox = mx - windows[active_idx].x;
-                    drag_oy = my - windows[active_idx].y;
+                    if (hit_titlebar(mx, my, hit)) {
+                        dragging = 1;
+                        drag_ox = mx - windows[win_count - 1].x;
+                        drag_oy = my - windows[win_count - 1].y;
+                    }
                 }
             }
         }
 
-        if (!btn_l) dragging = 0;
+        if (just_released) {
+            dragging = 0;
+        }
 
-        if (dragging && active_idx >= 0 && active_idx < win_count) {
-            windows[active_idx].x = mx - drag_ox;
-            windows[active_idx].y = my - drag_oy;
+        if (dragging && btn_l && win_count > 0) {
+            windows[win_count - 1].x = mx - drag_ox;
+            windows[win_count - 1].y = my - drag_oy;
         }
 
         prev_btn_l = btn_l;
@@ -112,11 +131,9 @@ int main(int argc, char **argv) {
         gui_draw_rect(0, gui_screen_h - 32, gui_screen_w, 1, 0x444466);
 
         for (int i = 0; i < win_count; i++) {
-            windows[i].is_active = (i == active_idx || i == win_count - 1);
+            windows[i].is_active = (i == win_count - 1);
             gui_draw_window(&windows[i]);
         }
-
-        if (win_count > 0) windows[win_count - 1].is_active = 1;
 
         gui_draw_cursor(mx, my);
         gui_flush();
