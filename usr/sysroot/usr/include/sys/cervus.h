@@ -80,6 +80,12 @@ typedef struct {
 } cervus_fb_info_t;
 
 typedef struct {
+    int32_t x, y;
+    int32_t btn_left, btn_right, btn_middle;
+    int32_t scroll;
+} cervus_mouse_state_t;
+
+typedef struct {
     int64_t tv_sec;
     int64_t tv_nsec;
 } cervus_timespec_t;
@@ -228,5 +234,6 @@ long     cervus_fb_blit(const void *buf, unsigned x, unsigned y, unsigned w, uns
 void    *cervus_fb_map(void);
 int      cervus_fb_acquire(void);
 int      cervus_fb_release(void);
+int      cervus_mouse_poll(cervus_mouse_state_t *out);
 
 #endif
