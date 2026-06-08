@@ -1523,6 +1523,29 @@ bool build_initramfs(void) {
         fclose(shf);
     }
 
+    FILE *tcf = fopen(INITRAMFS_ROOTFS "/etc/termcap", "w");
+    if (tcf) {
+        fprintf(tcf,
+            "cervus-vt|ansi|ansi terminal:\\\n"
+            "\t:co#80:li#25:am:bs:cl=\\E[H\\E[J:cm=\\E[%%i%%d;%%dH:nd=\\E[C:up=\\E[A:\\\n"
+            "\t:ce=\\E[K:cd=\\E[J:so=\\E[7m:se=\\E[m:us=\\E[4m:ue=\\E[m:md=\\E[1m:me=\\E[m:\\\n"
+            "\t:kb=^H:kh=\\E[H:ku=\\E[A:kd=\\E[B:kl=\\E[D:kr=\\E[C:\\\n"
+            "\t:ho=\\E[H:ti=\\E[r\\E[H:te=\\E[r\\E[H:\n"
+            "vt100|vt100-am|dec vt100:\\\n"
+            "\t:do=^J:co#80:li#24:cl=\\E[H\\E[J:sf=^J:sr=\\EM:\\\n"
+            "\t:le=^H:bs:am:cm=\\E[%%i%%d;%%dH:nd=\\E[C:up=\\E[A:\\\n"
+            "\t:ce=\\E[K:cd=\\E[J:so=\\E[7m:se=\\E[m:us=\\E[4m:ue=\\E[m:md=\\E[1m:me=\\E[m:\\\n"
+            "\t:kb=^H:kh=\\E[H:ku=\\E[A:kd=\\E[B:kl=\\E[D:kr=\\E[C:\\\n"
+            "\t:ho=\\E[H:ti=\\E[r\\E[H:te=\\E[r\\E[H:\n"
+            "xterm|xterm terminal emulator:\\\n"
+            "\t:co#80:li#24:am:bs:cl=\\E[H\\E[J:cm=\\E[%%i%%d;%%dH:nd=\\E[C:up=\\E[A:\\\n"
+            "\t:ce=\\E[K:cd=\\E[J:so=\\E[7m:se=\\E[m:us=\\E[4m:ue=\\E[m:md=\\E[1m:me=\\E[m:\\\n"
+            "\t:kb=^H:kh=\\E[H:ku=\\E[A:kd=\\E[B:kl=\\E[D:kr=\\E[C:\\\n"
+            "\t:ho=\\E[H:ti=\\E[r\\E[H:te=\\E[r\\E[H:\n"
+        );
+        fclose(tcf);
+    }
+
     if (file_exists(INIT_ELF)) {
         if (cmd_run(false, "cp %s %s/bin/init", INIT_ELF, INITRAMFS_ROOTFS) != 0) {
             print_color(COLOR_RED, "[initramfs] Failed to copy init.elf -> bin/init");

@@ -40,6 +40,7 @@ struct stat {
     gid_t    st_gid;
     off_t    st_size;
     blkcnt_t st_blocks;
+    blksize_t st_blksize;
     dev_t    st_dev;
     nlink_t  st_nlink;
     time_t   st_atime;

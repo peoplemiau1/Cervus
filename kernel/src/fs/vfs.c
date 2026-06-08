@@ -220,6 +220,11 @@ int vfs_open(const char *path, int flags, uint32_t mode, vfs_file_t **out) {
     vnode_t *node = NULL;
     int ret = vfs_lookup(path, &node);
 
+    if (ret == 0 && (flags & O_CREAT) && (flags & O_EXCL)) {
+        vnode_unref(node);
+        return -EEXIST;
+    }
+
     if (ret == -ENOENT && (flags & O_CREAT)) {
         char dirpath[VFS_MAX_PATH];
         strncpy(dirpath, path, VFS_MAX_PATH - 1);

@@ -7,6 +7,7 @@
 #define EXIT_FAILURE 1
 
 #define RAND_MAX 0x7FFFFFFF
+#define MB_CUR_MAX 1
 
 void *malloc(size_t n);
 void *calloc(size_t nmemb, size_t size);

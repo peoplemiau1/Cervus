@@ -16,6 +16,7 @@
 #define O_RDWR      0x002
 #define O_ACCMODE   0x003
 #define O_CREAT     0x040
+#define O_EXCL      0x080
 #define O_TRUNC     0x200
 #define O_APPEND    0x400
 #define O_DIRECTORY 0x10000

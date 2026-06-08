@@ -166,4 +166,10 @@ int sigaltstack(const stack_t *ss, stack_t *oss);
 #define SIG_UNBLOCK  1
 #define SIG_SETMASK  2
 
+int cervus_task_kill(pid_t pid);
+static inline int kill(pid_t pid, int sig) {
+    (void)sig;
+    return cervus_task_kill(pid);
+}
+
 #endif

@@ -64,6 +64,10 @@ static inline int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
     (void)stream; (void)buf; (void)mode; (void)size;
     return 0;
 }
+
+static inline void setbuf(FILE *stream, char *buf) {
+    (void)setvbuf(stream, buf, buf ? _IOFBF : _IONBF, BUFSIZ);
+}
 #define getc(f) fgetc(f)
 #define putc(c, f) fputc(c, f)
 #define fseeko(f, o, w) fseek(f, (long)(o), w)

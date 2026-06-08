@@ -37,6 +37,14 @@ ssize_t readlink(const char *path, char *buf, size_t bufsiz);
 int     truncate(const char *path, off_t length);
 int     ftruncate(int fd, off_t length);
 int     fsync(int fd);
+static inline int chown(const char *path, uid_t owner, gid_t group) {
+    (void)path; (void)owner; (void)group;
+    return 0;
+}
+static inline char *ttyname(int fd) {
+    (void)fd;
+    return "/dev/tty";
+}
 int     fdatasync(int fd);
 long    getdents(int fd, void *buf, unsigned long count);
 
@@ -56,10 +64,30 @@ pid_t   fork(void);
 int     execve(const char *path, char *const argv[], char *const envp[]);
 int     execv(const char *path, char *const argv[]);
 int     execvp(const char *file, char *const argv[]);
+#include <stdarg.h>
+static inline int execl(const char *path, const char *arg, ...) {
+    char *argv[64];
+    argv[0] = (char *)arg;
+    int argc = 1;
+    va_list args;
+    va_start(args, arg);
+    while (argc < 63) {
+        char *a = va_arg(args, char *);
+        argv[argc++] = a;
+        if (!a) break;
+    }
+    argv[63] = NULL;
+    va_end(args);
+    return execv(path, argv);
+}
 void    _exit(int status) __attribute__((noreturn));
 
 unsigned int sleep(unsigned int sec);
 int          usleep(unsigned int usec);
+static inline unsigned int alarm(unsigned int seconds) {
+    (void)seconds;
+    return 0;
+}
 
 void *sbrk(intptr_t increment);
 int   brk(void *addr);
