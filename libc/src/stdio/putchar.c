@@ -12,6 +12,9 @@ uint32_t bg_color   = COLOR_BLACK;
 extern struct limine_framebuffer *global_framebuffer;
 
 static int  cursor_visible      = 1;
+static int  cursor_shape        = 1;
+static uint32_t utf8_acc        = 0;
+static int      utf8_need       = 0;
 static int  scroll_buffer_index = 0;
 static int  total_scroll_lines  = 0;
 static int  flush_inhibit       = 0;
@@ -66,7 +69,7 @@ void console_redraw_grid(void) {
             uint32_t x = col * 8, y = row * 16;
             fb_fill_rect(global_framebuffer, x, y, 8, 16, c->bg);
             if (c->ch && c->ch != ' ')
-                fb_draw_char(global_framebuffer, (char)c->ch, x, y, c->fg);
+                fb_draw_char(global_framebuffer, c->ch, x, y, c->fg);
         }
     }
 }
@@ -206,28 +209,53 @@ void scroll_screen(int lines) {
     mark_dirty(0, sh);
 }
 
+static void cell_cell_at(uint32_t x, uint32_t y, uint32_t *ch, uint32_t *fg, uint32_t *bg) {
+    *ch = ' '; *fg = text_color; *bg = bg_color;
+    if (!g_grid || g_gcols == 0) return;
+    uint32_t col = x / 8, row = y / 16;
+    if (col >= g_gcols || row >= g_grows) return;
+    vt_cell_t *c = &g_grid[(size_t)row * g_gcols + col];
+    *ch = c->ch; *fg = c->fg; *bg = c->bg;
+}
+
 static void draw_cursor_at(uint32_t x, uint32_t y) {
     if (g_offscreen) return;
     if (!global_framebuffer || !cursor_visible) return;
     if (x + 8 > global_framebuffer->width || y + 16 > global_framebuffer->height) return;
-    for (uint32_t col = 0; col < 8; col++) {
-        fb_draw_pixel(global_framebuffer, x + col, y + 14, text_color);
-        fb_draw_pixel(global_framebuffer, x + col, y + 15, text_color);
-    }
-    if (global_framebuffer)
+
+    uint32_t ch, fg, bg;
+    cell_cell_at(x, y, &ch, &fg, &bg);
+
+    if (cursor_shape == 0) {
+        fb_fill_rect(global_framebuffer, x, y, 8, 16, text_color);
+        if (ch && ch != ' ')
+            fb_draw_char(global_framebuffer, ch, x, y, bg);
+        fb_flush_lines(global_framebuffer, y, y + 16);
+    } else if (cursor_shape == 2) {
+        for (uint32_t row = 0; row < 16; row++) {
+            fb_draw_pixel(global_framebuffer, x, y + row, text_color);
+        }
+        fb_flush_lines(global_framebuffer, y, y + 16);
+    } else {
+        for (uint32_t col = 0; col < 8; col++) {
+            fb_draw_pixel(global_framebuffer, x + col, y + 14, text_color);
+            fb_draw_pixel(global_framebuffer, x + col, y + 15, text_color);
+        }
         fb_flush_lines(global_framebuffer, y + 14, y + 16);
+    }
 }
 
 static void erase_cursor_at(uint32_t x, uint32_t y) {
     if (g_offscreen) return;
     if (!global_framebuffer) return;
     if (x + 8 > global_framebuffer->width || y + 16 > global_framebuffer->height) return;
-    for (uint32_t col = 0; col < 8; col++) {
-        fb_draw_pixel(global_framebuffer, x + col, y + 14, bg_color);
-        fb_draw_pixel(global_framebuffer, x + col, y + 15, bg_color);
-    }
-    if (global_framebuffer)
-        fb_flush_lines(global_framebuffer, y + 14, y + 16);
+
+    uint32_t ch, fg, bg;
+    cell_cell_at(x, y, &ch, &fg, &bg);
+    fb_fill_rect(global_framebuffer, x, y, 8, 16, bg);
+    if (ch && ch != ' ')
+        fb_draw_char(global_framebuffer, ch, x, y, fg);
+    fb_flush_lines(global_framebuffer, y, y + 16);
 }
 
 void draw_cursor(void)  { draw_cursor_at(cursor_x, cursor_y); }
@@ -252,6 +280,7 @@ typedef enum {
     PS_ESC,
     PS_CSI,
     PS_CSI_PRIV,
+    PS_CSI_SP,
     PS_ESC_SP,
 } parse_state_t;
 
@@ -279,7 +308,7 @@ static int      ps_reverse = 0;
 static void handle_sgr(void) {
     if (ps_nparams == 0) {
         text_color = COLOR_WHITE; bg_color = COLOR_BLACK;
-        ps_bold = 0; ps_reverse = 0;
+        ps_reverse = 0;
         return;
     }
     for (int i = 0; i < ps_nparams; i++) {
@@ -298,6 +327,15 @@ static void handle_sgr(void) {
                 uint32_t tmp = text_color; text_color = bg_color; bg_color = tmp;
                 ps_reverse = 0;
             }
+        }
+        else if ((p == 38 || p == 48) && i + 2 < ps_nparams && ps_params[i + 1] == 2) {
+            uint32_t r = (uint32_t)(ps_params[i + 2] & 0xFF);
+            uint32_t g = (i + 3 < ps_nparams) ? (uint32_t)(ps_params[i + 3] & 0xFF) : 0;
+            uint32_t b = (i + 4 < ps_nparams) ? (uint32_t)(ps_params[i + 4] & 0xFF) : 0;
+            uint32_t c = (r << 16) | (g << 8) | b;
+            if (p == 38) { if (ps_reverse) bg_color = c; else text_color = c; }
+            else         { if (ps_reverse) text_color = c; else bg_color = c; }
+            i += 4;
         }
         else if (p >= 30 && p <= 37) {
             uint32_t c = ansi_color(p-30, ps_bold);
@@ -347,14 +385,14 @@ static void clear_cell(uint32_t x, uint32_t y) {
     fb_fill_rect(global_framebuffer, x, y, 8, 16, bg_color);
 }
 
-static void draw_and_advance(char c) {
+static void draw_and_advance(uint32_t cp) {
     if (!global_framebuffer) return;
     uint32_t sh = get_screen_height();
     uint32_t sw = get_screen_width();
-    grid_put(cursor_x / 8, cursor_y / 16, (uint8_t)c, text_color, bg_color);
+    grid_put(cursor_x / 8, cursor_y / 16, cp, text_color, bg_color);
     if (!g_offscreen) {
         fb_fill_rect(global_framebuffer, cursor_x, cursor_y, 8, 16, bg_color);
-        fb_draw_char(global_framebuffer, c, cursor_x, cursor_y, text_color);
+        fb_draw_char(global_framebuffer, cp, cursor_x, cursor_y, text_color);
         flush_region(cursor_y, 16);
     }
     if (!autowrap && cursor_x + 8 >= sw) return;
@@ -390,7 +428,21 @@ int putchar(int c) {
             }
             break;
         default:
-            if (ch >= 32 && ch <= 126) draw_and_advance((char)ch);
+            if (ch >= 32 && ch <= 126) {
+                utf8_need = 0;
+                draw_and_advance(ch);
+            } else if (utf8_need > 0 && (ch & 0xC0) == 0x80) {
+                utf8_acc = (utf8_acc << 6) | (ch & 0x3F);
+                if (--utf8_need == 0) draw_and_advance(utf8_acc);
+            } else if ((ch & 0xE0) == 0xC0) {
+                utf8_acc = ch & 0x1F; utf8_need = 1;
+            } else if ((ch & 0xF0) == 0xE0) {
+                utf8_acc = ch & 0x0F; utf8_need = 2;
+            } else if ((ch & 0xF8) == 0xF0) {
+                utf8_acc = ch & 0x07; utf8_need = 3;
+            } else {
+                utf8_need = 0;
+            }
             break;
         }
         break;
@@ -407,6 +459,7 @@ int putchar(int c) {
 
     case PS_CSI:
         if (ch == '?') { ps_state = PS_CSI_PRIV; break; }
+        if (ch == ' ') { ps_push_param(); ps_state = PS_CSI_SP; break; }
         __attribute__((fallthrough));
     case PS_CSI_PRIV:
         if (ch >= '0' && ch <= '9') {
@@ -544,6 +597,16 @@ int putchar(int c) {
             }
             ps_state = PS_NORMAL;
         }
+        break;
+
+    case PS_CSI_SP:
+        if (ch == 'q') {
+            int p = ps_get(0, 1);
+            if      (p == 0 || p == 1 || p == 2) cursor_shape = 0;
+            else if (p == 3 || p == 4)           cursor_shape = 1;
+            else if (p == 5 || p == 6)           cursor_shape = 2;
+        }
+        ps_state = PS_NORMAL;
         break;
     }
     return c;

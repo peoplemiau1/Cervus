@@ -21,6 +21,8 @@
 task_t* ready_queues[MAX_PRIORITY + 1] = {0};
 task_t* current_task[MAX_CPUS] = {0};
 
+static volatile uint32_t g_foreground_pid[VT_COUNT];
+
 static task_t  idle_tasks[MAX_CPUS];
 static task_t  bootstrap_tasks[MAX_CPUS];
 static volatile uint64_t reschedule_calls = 0;
@@ -190,7 +192,7 @@ void sched_init(void) {
         }
         current_task[i] = NULL;
     }
-    serial_writestring("Scheduler initialized (PREEMPTIVE SMP MODE)\n");
+    serial_writestring("Scheduler initialized\n");
 }
 
 task_t* task_create(const char* name, void (*entry)(void*), void* arg, int priority) {
@@ -420,7 +422,7 @@ extern void tty_reset_nonblock(void);
 __attribute__((noreturn)) void task_exit(void)
 {
     asm volatile("cli");
-    uint32_t cpu = lapic_get_id();
+    uint32_t cpu = smp_cpu_index();
     percpu_t* pc = get_percpu();
     task_t* me = pc ? (task_t*)pc->current_task : current_task[cpu];
 
@@ -428,7 +430,8 @@ __attribute__((noreturn)) void task_exit(void)
 
     LOG_D("[EXIT] task_exit called cpu=%u me=%p pid=%u\n", cpu, (void*)me, me->pid);
 
-    tty_reset_nonblock();
+    if (me->ctty >= 0 && me->ctty < VT_COUNT && g_foreground_pid[me->ctty] == me->pid)
+        tty_reset_nonblock();
 
     task_t* init = task_find_by_pid(1);
     if (init && init != me) {
@@ -487,11 +490,9 @@ void task_kill(task_t* target) {
     }
 }
 
-static volatile uint32_t g_foreground_pid[VT_COUNT];
-
 static int caller_ctty(void) {
     percpu_t *pc = get_percpu();
-    task_t *me = pc ? (task_t *)pc->current_task : current_task[lapic_get_id()];
+    task_t *me = pc ? (task_t *)pc->current_task : current_task[smp_cpu_index()];
     int vt = me ? me->ctty : 0;
     if (vt < 0 || vt >= VT_COUNT) vt = 0;
     return vt;
@@ -519,7 +520,7 @@ task_t* task_find_foreground(void) {
     return t;
 }
 
-static void task_kill_subtree(task_t *root) {
+void task_kill_subtree(task_t *root) {
     if (!root) return;
     uint64_t _cf = spinlock_acquire_irqsave(&children_lock);
     task_t *child = root->children;
@@ -579,7 +580,7 @@ void sched_reschedule(void) {
     process_deferred_free();
 
     reschedule_calls++;
-    uint32_t cpu  = lapic_get_id();
+    uint32_t cpu  = smp_cpu_index();
 
     task_t*  old  = current_task[cpu];
     task_t*  next = sched_pick_next(cpu);
@@ -682,7 +683,7 @@ void task_yield(void) {
 
 void task_sleep_ns(uint64_t ns) {
     if (ns == 0) return;
-    uint32_t cpu = lapic_get_id();
+    uint32_t cpu = smp_cpu_index();
     task_t *me = current_task[cpu];
     if (!me) return;
     me->wakeup_time_ns = sched_now_ns() + ns;
@@ -751,7 +752,7 @@ void sched_wakeup_sleepers(uint64_t now_ns) {
 
 static void idle_loop(void* arg) {
     (void)arg;
-    uint32_t cpu = lapic_get_id();
+    uint32_t cpu = smp_cpu_index();
     serial_printf("[IDLE] CPU %u entering idle loop\n", cpu);
     while (1) {
         process_deferred_free();

@@ -1,20 +1,21 @@
 #include "../../../include/syscall/syscall_internal.h"
-#include "../../../include/drivers/ps2.h"
+#include "../../../include/drivers/mouse.h"
 
-int64_t sys_mouse_state(uint64_t out_ptr)
+int64_t sys_mouse_state(uint64_t buf_ptr)
 {
-    if (!out_ptr) return -EINVAL;
-    if (!syscall_uptr_validate((void *)out_ptr, sizeof(cervus_mouse_state_t))) return -EFAULT;
+    if (!buf_ptr) return -EINVAL;
 
-    const mouse_state_t *ms = ps2_mouse_get_state();
+    const mouse_state_t *m = mouse_get_state();
+    if (!m) return -ENODEV;
 
-    cervus_mouse_state_t out;
-    out.x          = ms->x;
-    out.y          = ms->y;
-    out.btn_left   = ms->btn_left   ? 1 : 0;
-    out.btn_right  = ms->btn_right  ? 1 : 0;
-    out.btn_middle = ms->btn_middle ? 1 : 0;
-    out.scroll     = (int32_t)ms->scroll;
+    cervus_mouse_info_t info;
+    info.x          = m->x;
+    info.y          = m->y;
+    info.btn_left   = m->btn_left   ? 1 : 0;
+    info.btn_right  = m->btn_right  ? 1 : 0;
+    info.btn_middle = m->btn_middle ? 1 : 0;
+    info.scroll     = (m->scroll == MOUSE_SCROLL_UP)   ?  1 :
+                      (m->scroll == MOUSE_SCROLL_DOWN) ? -1 : 0;
 
-    return syscall_copy_to_user((void *)out_ptr, &out, sizeof(out));
+    return syscall_copy_to_user((void *)buf_ptr, &info, sizeof(info));
 }

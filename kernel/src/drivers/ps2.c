@@ -1,4 +1,6 @@
 #include "../../include/drivers/ps2.h"
+#include "../../include/drivers/mouse.h"
+#include "../../include/drivers/keymap.h"
 #include "../../include/sched/sched.h"
 #include "../../include/fs/devfs.h"
 #include "../../include/drivers/timer.h"
@@ -19,7 +21,6 @@
 typedef enum { MOUSE_MODE_RELATIVE = 0, MOUSE_MODE_ABSOLUTE } mouse_mode_t;
 
 static volatile kb_state_t    kb_state;
-static volatile mouse_state_t mouse_state;
 static volatile mouse_mode_t  mouse_mode       = MOUSE_MODE_RELATIVE;
 static volatile int32_t       mouse_screen_w   = 1024;
 static volatile int32_t       mouse_screen_h   = 768;
@@ -219,10 +220,26 @@ DEFINE_IRQ(KB_IRQ_VECTOR, ps2_kb_handler)
         return;
     }
 
-    if (key == SC_LSHIFT || key == SC_RSHIFT) { kb_state.shift     = !released; lapic_eoi(); return; }
-    if (key == SC_LCTRL)                       { kb_state.ctrl      = !released; lapic_eoi(); return; }
-    if (key == SC_LALT)                        { kb_state.alt       = !released; lapic_eoi(); return; }
-    if (key == SC_CAPS && !released)           { kb_state.caps_lock = !kb_state.caps_lock; lapic_eoi(); return; }
+    int tk = keymap_get_toggle_key();
+
+    if (key == SC_LSHIFT || key == SC_RSHIFT) {
+        if (!released && tk == KMAP_TOGGLE_ALT_SHIFT  && kb_state.alt)  keymap_toggle();
+        if (!released && tk == KMAP_TOGGLE_CTRL_SHIFT && kb_state.ctrl) keymap_toggle();
+        kb_state.shift = !released; lapic_eoi(); return;
+    }
+    if (key == SC_LCTRL) {
+        if (!released && tk == KMAP_TOGGLE_CTRL_SHIFT && kb_state.shift) keymap_toggle();
+        kb_state.ctrl = !released; lapic_eoi(); return;
+    }
+    if (key == SC_LALT) {
+        if (!released && tk == KMAP_TOGGLE_ALT_SHIFT && kb_state.shift) keymap_toggle();
+        kb_state.alt = !released; lapic_eoi(); return;
+    }
+    if (key == SC_CAPS && !released) {
+        if (tk == KMAP_TOGGLE_CAPSLOCK) keymap_toggle();
+        else kb_state.caps_lock = !kb_state.caps_lock;
+        lapic_eoi(); return;
+    }
     if (released)                              { lapic_eoi(); return; }
 
     if (kb_state.ctrl && kb_state.alt) {
@@ -254,8 +271,12 @@ DEFINE_IRQ(KB_IRQ_VECTOR, ps2_kb_handler)
     }
 
     char c = scancode_to_char(key);
-    if (c != 0)
-        console_input_char(c);
+    if (c != 0) {
+        if (keymap_is_alt())
+            keymap_emit(c, console_input_char);
+        else
+            console_input_char(c);
+    }
 
     lapic_eoi();
 }
@@ -282,35 +303,30 @@ DEFINE_IRQ(MOUSE_IRQ_VECTOR, ps2_mouse_handler)
     uint8_t flags = mouse_packet[0];
     if ((flags & MOUSE_X_OVERFLOW) || (flags & MOUSE_Y_OVERFLOW)) { lapic_eoi(); return; }
 
-    mouse_state.btn_left   = (flags & MOUSE_BTN_LEFT)   != 0;
-    mouse_state.btn_right  = (flags & MOUSE_BTN_RIGHT)  != 0;
-    mouse_state.btn_middle = (flags & MOUSE_BTN_MIDDLE) != 0;
+    bool bl = (flags & MOUSE_BTN_LEFT)   != 0;
+    bool br = (flags & MOUSE_BTN_RIGHT)  != 0;
+    bool bm = (flags & MOUSE_BTN_MIDDLE) != 0;
+
+    int32_t wheel = 0;
+    if (mouse_has_scroll) {
+        uint8_t z_raw = mouse_packet[3] & 0x0F;
+        int8_t  z     = (z_raw & 0x08) ? (int8_t)(z_raw | 0xF0) : (int8_t)z_raw;
+        if      (z > 0) wheel = -1;
+        else if (z < 0) wheel =  1;
+    }
 
     if (mouse_mode == MOUSE_MODE_ABSOLUTE) {
         uint16_t abs_x = (uint16_t)mouse_packet[1] | ((flags & 0x10) ? 0x100 : 0);
         uint16_t abs_y = (uint16_t)mouse_packet[2] | ((flags & 0x20) ? 0x100 : 0);
-        mouse_state.x  = (int32_t)((uint32_t)abs_x * (uint32_t)mouse_screen_w / 0x1FF);
-        mouse_state.y  = (int32_t)((uint32_t)abs_y * (uint32_t)mouse_screen_h / 0x1FF);
+        int32_t  x = (int32_t)((uint32_t)abs_x * (uint32_t)mouse_screen_w / 0x1FF);
+        int32_t  y = (int32_t)((uint32_t)abs_y * (uint32_t)mouse_screen_h / 0x1FF);
+        mouse_inject_abs(x, y, bl, br, bm, wheel);
     } else {
         int32_t dx = mouse_packet[1];
         int32_t dy = mouse_packet[2];
         if (flags & MOUSE_X_SIGN) dx |= 0xFFFFFF00;
         if (flags & MOUSE_Y_SIGN) dy |= 0xFFFFFF00;
-        mouse_state.x += dx;
-        mouse_state.y -= dy;
-    }
-
-    if (mouse_state.x < 0)               mouse_state.x = 0;
-    if (mouse_state.y < 0)               mouse_state.y = 0;
-    if (mouse_state.x >= mouse_screen_w) mouse_state.x = mouse_screen_w - 1;
-    if (mouse_state.y >= mouse_screen_h) mouse_state.y = mouse_screen_h - 1;
-
-    if (mouse_has_scroll) {
-        uint8_t z_raw = mouse_packet[3] & 0x0F;
-        int8_t  z     = (z_raw & 0x08) ? (int8_t)(z_raw | 0xF0) : (int8_t)z_raw;
-        if      (z > 0) mouse_state.scroll = MOUSE_SCROLL_DOWN;
-        else if (z < 0) mouse_state.scroll = MOUSE_SCROLL_UP;
-        else            mouse_state.scroll = MOUSE_SCROLL_NONE;
+        mouse_inject_rel(dx, -dy, bl, br, bm, wheel);
     }
 
     lapic_eoi();
@@ -338,14 +354,26 @@ bool ps2_init(void) {
 
     ps2_send_cmd(PS2_CMD_SELF_TEST);
     uint8_t result = ps2_recv_data();
-    if (result != 0x55) { serial_printf("[PS2] Self-test FAILED (0x%02x)\n", result); return false; }
-    serial_writestring("[PS2] Self-test PASSED\n");
+    if (result == 0xFF) {
+        serial_writestring("[PS2] Controller not responding (no i8042?), skipping PS/2\n");
+        return false;
+    }
+    if (result != 0x55)
+        serial_printf("[PS2] Self-test returned 0x%02x (expected 0x55), continuing anyway\n",
+                      result);
+    else
+        serial_writestring("[PS2] Self-test PASSED\n");
     ps2_send_cmd(PS2_CMD_WRITE_CONFIG);
     ps2_send_data(cfg);
 
     ps2_send_cmd(PS2_CMD_TEST_PORT1);
-    bool kb_ok = (ps2_recv_data() == 0x00);
+    uint8_t port1_res = ps2_recv_data();
+    bool kb_ok = (port1_res == 0x00);
     serial_printf("[PS2] Port 1 (keyboard): %s\n", kb_ok ? "OK" : "FAIL");
+    if (!kb_ok && port1_res != 0xFF) {
+        serial_printf("[PS2] Port 1 test=0x%02x, trying keyboard anyway\n", port1_res);
+        kb_ok = true;
+    }
 
     ps2_send_cmd(PS2_CMD_TEST_PORT2);
     bool mouse_ok = (ps2_recv_data() == 0x00);
@@ -422,20 +450,17 @@ bool ps2_init(void) {
     kb_state  = (kb_state_t){0};
     kb_buf    = (kb_buf_t){0};
 
-    mouse_state      = (mouse_state_t){0};
     mouse_packet_idx = 0;
     mouse_lost_sync  = 0;
 
     if (global_framebuffer) {
         mouse_screen_w = (int32_t)global_framebuffer->width;
         mouse_screen_h = (int32_t)global_framebuffer->height;
-        mouse_state.x  = mouse_screen_w / 2;
-        mouse_state.y  = mouse_screen_h / 2;
     }
+    mouse_set_screen(mouse_screen_w, mouse_screen_h);
 
-    serial_printf("[PS2] Screen: %dx%d, cursor start: %d,%d\n",
-                  (int)mouse_screen_w, (int)mouse_screen_h,
-                  (int)mouse_state.x,  (int)mouse_state.y);
+    serial_printf("[PS2] Screen: %dx%d\n",
+                  (int)mouse_screen_w, (int)mouse_screen_h);
     serial_writestring("[PS2] Driver ready.\n");
     return true;
 }
@@ -444,7 +469,7 @@ const kb_state_t*    ps2_kb_get_state(void)    {
     return (const kb_state_t*)&kb_state;
 }
 const mouse_state_t* ps2_mouse_get_state(void) {
-    return (const mouse_state_t*)&mouse_state;
+    return mouse_get_state();
 }
 
 bool kb_buf_empty(void) {
