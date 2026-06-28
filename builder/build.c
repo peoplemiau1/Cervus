@@ -121,6 +121,7 @@ bool ARG_LIVE           = false;
 bool ARG_AHCI           = false;
 bool ARG_NVME           = false;
 bool ARG_ALL_DISKS      = false;
+bool ARG_ALEX           = false;
 
 char **TREE_FILES       = NULL;
 int    TREE_FILES_COUNT = 0;
@@ -176,6 +177,15 @@ time_t get_mtime(const char *path) {
     struct stat attr;
     if (stat(path, &attr) == 0) return attr.st_mtime;
     return 0;
+}
+
+static bool elf_up_to_date(const char *src, const char *elf) {
+    if (!file_exists(elf)) return false;
+    time_t et = get_mtime(elf);
+    if (get_mtime(src) > et) return false;
+    if (get_mtime(SYSROOT_LIB "/libcervus.a") > et) return false;
+    if (get_mtime(SYSROOT_LIB "/crt0.o") > et) return false;
+    return true;
 }
 
 void rm_rf(const char *path) {
@@ -257,7 +267,7 @@ static bool extract_limine_hdd_bin(void) {
     return true;
 }
 
-#define LIMINE_VERSION    "12.3.2"
+#define LIMINE_VERSION    "12.3.3"
 #define LIMINE_TARBALL    "limine-binary.tar.gz"
 #define LIMINE_TARBALL_URL \
     "https://github.com/limine-bootloader/limine/releases/download/v" \
@@ -298,7 +308,6 @@ bool build_limine(void) {
 void ensure_linker_script(void) {
     ensure_dir("kernel/linker-scripts");
     const char *lds_path = "kernel/linker-scripts/x86_64.lds";
-    if (file_exists(lds_path)) return;
 
     const char *script =
 "OUTPUT_FORMAT(elf64-x86-64)\n"
@@ -334,6 +343,7 @@ void ensure_linker_script(void) {
 "        *(.data .data.*)\n"
 "        . = ALIGN(4096);\n"
 "        __percpu_start = .;\n"
+"        KEEP(*(.percpu.head))\n"
 "        KEEP(*(.percpu .percpu.*))\n"
 "        . = ALIGN(4096);\n"
 "        __percpu_end = .;\n"
@@ -355,7 +365,7 @@ typedef struct {
     char name[256];
 } app_entry_t;
 
-#define MAX_APPS 64
+#define MAX_APPS 256
 static app_entry_t g_apps[MAX_APPS];
 static int         g_naps = 0;
 
@@ -392,7 +402,7 @@ static int scan_apps(void) {
 }
 
 static bool build_one_app(const app_entry_t *e) {
-    if (file_exists(e->elf) && get_mtime(e->src) <= get_mtime(e->elf)) {
+    if (elf_up_to_date(e->src, e->elf)) {
         print_color(COLOR_GREEN, "[ELF] %s is up to date", e->elf);
         return true;
     }
@@ -482,7 +492,7 @@ static int scan_bin_apps(void) {
 }
 
 static bool build_one_bin_app(const app_entry_t *e) {
-    if (file_exists(e->elf) && get_mtime(e->src) <= get_mtime(e->elf)) {
+    if (elf_up_to_date(e->src, e->elf)) {
         print_color(COLOR_GREEN, "[bin] %s is up to date", e->elf);
         return true;
     }
@@ -565,6 +575,7 @@ static bool need_rebuild(const char *src, const char *obj) {
     if (!file_exists(obj)) return true;
     return get_mtime_safe(src) > get_mtime_safe(obj);
 }
+
 
 typedef struct {
     char **items;
@@ -1878,7 +1889,17 @@ bool compile_kernel(void) {
         }
     }
 
-    if (failed) return false;
+    if (failed) {
+        for (int i = 0; i < sources.count; ++i) free(sources.paths[i]);
+        free(sources.paths);
+        for(int i = 0; i < objects.count; ++i) free(objects.paths[i]);
+        free(objects.paths);
+        return false;
+        
+    }
+
+    for(int i = 0; i < sources.count; ++i) free(sources.paths[i]);
+    free(sources.paths);
 
     print_color(COLOR_BLUE, "Linking kernel...");
     char ld_cmd[65536];
@@ -1890,6 +1911,9 @@ bool compile_kernel(void) {
         strcat(ld_cmd, objects.paths[i]);
     }
     if (system(ld_cmd) != 0) return false;
+
+    for(int i = 0; i < objects.count; ++i) free(objects.paths[i]);
+    free(objects.paths);
 
     print_color(COLOR_GREEN, "Kernel linked: bin/kernel");
     return true;
@@ -2058,6 +2082,8 @@ bool build_data_iso(void) {
     print_color(COLOR_GREEN, "cervus_data.iso ready");
     return true;
 }
+
+static void alex_test(void);
 
 void check_sudo(void) {
     if (geteuid() != 0) {
@@ -2501,6 +2527,36 @@ static const char* find_ovmf(void) {
     }
     return NULL;
 }
+// author this path: alexvoste -> https://github.com/alexvoste
+static void alex_test(void) {
+    print_color(COLOR_BOLD COLOR_MAGENTA, "=== Alex test mode ===");
+    print_color(COLOR_CYAN, "Building with AddressSanitizer (host) and checking for leaks...");
+
+    ARG_ALEX = true;
+
+    rm_rf("obj");
+    rm_rf("bin");
+    clean_apps_elfs();
+    clean_bin_elfs();
+    clean_libcervus_build(true);
+    clean_tcc_build(true);
+    if (file_exists(INITRAMFS_TAR)) remove(INITRAMFS_TAR);
+    rm_rf(INITRAMFS_ROOTFS);
+
+    if (!setup_dependencies()) return;
+    if (!build_libcervus()) { print_color(COLOR_RED, "libcervus build failed"); return; }
+    if (!build_tcc())       { print_color(COLOR_RED, "tcc build failed"); return; }
+    if (!build_all_apps())  { print_color(COLOR_RED, "apps build failed"); return; }
+    if (!build_all_bin_apps()) { print_color(COLOR_RED, "bin apps build failed"); return; }
+    if (!build_installer()) { print_color(COLOR_RED, "installer build failed"); return; }
+    if (!compile_kernel())  { print_color(COLOR_RED, "kernel build failed"); return; }
+    if (!build_initramfs()) { print_color(COLOR_RED, "initramfs build failed"); return; }
+    if (!create_iso())      { print_color(COLOR_RED, "ISO creation failed"); return; }
+
+    print_color(COLOR_GREEN, "Build completed. LSAN report will follow on exit.");
+
+    ARG_ALEX = false;
+}
 
 static void do_clean(void) {
     for (int i = 0; DIRS_TO_CLEAN[i];  i++) rm_rf(DIRS_TO_CLEAN[i]);
@@ -2764,7 +2820,7 @@ static int tui_key(void) {
     return ch;
 }
 
-#define MENU_ROWS 9
+#define MENU_ROWS 10
 
 static void tui_render(const run_cfg_t *c, int sel) {
     printf("\033[2J\033[H");
@@ -2780,6 +2836,7 @@ static void tui_render(const run_cfg_t *c, int sel) {
         "Flash ISO to USB",
         "Clean artifacts",
         "Hardware install (sudo)",
+        "alex(ASan test)"
     };
     char val[MENU_ROWS][48];
     snprintf(val[0], 48, "%s", c->uefi ? "UEFI" : "BIOS");
@@ -2834,6 +2891,7 @@ static int tui_menu(run_cfg_t *cfg) {
             if (sel == 6) { action = 1; break; }
             if (sel == 7) { action = 2; break; }
             if (sel == 8) { action = 3; break; }
+            if (sel == 9)  { action = 4; break; }
         }
     }
     tui_raw_off();
@@ -2868,6 +2926,8 @@ int main(int argc, char **argv) {
             cfg.disk = DISK_NONE;
         } else if (strcmp(a, "--uefi") == 0) {
             cfg.uefi = true;
+        } else if (strcmp(a, "--alex") == 0) {
+            ARG_ALEX = true;
         } else if (strcmp(a, "--installed") == 0) {
             cfg.installed = true;
         } else if (strncmp(a, "--disk=", 7) == 0) {
@@ -2893,11 +2953,13 @@ int main(int argc, char **argv) {
             case 1: flash_iso(); return 0;
             case 2: do_clean(); return 0;
             case 3: hardware_test(); return 0;
+            case 4: alex_test(); return 0;
             default: return 0;
         }
     }
 
     if (strcmp(command, "help") == 0)         { print_help(); return 0; }
+    if (strcmp(command, "alex") == 0 || ARG_ALEX) { alex_test(); return 0; }
     if (strcmp(command, "run") == 0)          return run_os(cfg);
     if (strcmp(command, "flash") == 0)        { flash_iso(); return 0; }
     if (strcmp(command, "hardware") == 0 ||
