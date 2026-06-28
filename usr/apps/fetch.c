@@ -21,16 +21,16 @@ static const char *logo[] = {
 };
 
 static const char *quotes[] = {
-    "“The only way to go fast is to go well.” – Robert C. Martin",
-    "“Simplicity is the ultimate sophistication.” – Leonardo da Vinci",
-    "“Talk is cheap. Show me the code.” – Linus Torvalds",
-    "“Real programmers don't comment their code. If it was hard to write, it should be hard to understand.”",
-    "“Cervus OS: because why not?”",
-    "“Kernel panic? Nah, just a gentle nap.”",
-    "“Keep it simple, stupid!” – KISS principle",
-    "“Unix is basically a simple operating system, but you have to be a genius to understand the simplicity.” – Dennis Ritchie",
-    "“The best way to predict the future is to implement it.”",
-    "“Programs must be written for people to read, and only incidentally for machines to execute.” – Abelson & Sussman",
+    "\"The only way to go fast is to go well.\" - Robert C. Martin",
+    "\"Simplicity is the ultimate sophistication.\" - Leonardo da Vinci",
+    "\"Talk is cheap. Show me the code.\" - Linus Torvalds",
+    "\"Real programmers don't comment their code. If it was hard to write, it should be hard to understand.\"",
+    "\"Cervus OS: because why not?\"",
+    "\"Kernel panic? Nah, just a gentle nap.\"",
+    "\"Keep it simple, stupid!\" - KISS principle",
+    "\"Unix is basically a simple operating system, but you have to be a genius to understand the simplicity.\" - Dennis Ritchie",
+    "\"The best way to predict the future is to implement it.\"",
+    "\"Programs must be written for people to read, and only incidentally for machines to execute.\" - Abelson & Sussman",
     NULL
 };
 
@@ -237,7 +237,7 @@ int main(int argc, char **argv)
     printf("%s\n", reset);
 
     printf("\033[1;30m");
-    for (int i = 0; i < col + 40; i++) fputs("─", stdout);
+    for (int i = 0; i < col + 40; i++) putchar('-');
     printf("%s\n", reset);
 
     if (quote) {
