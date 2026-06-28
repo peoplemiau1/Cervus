@@ -461,8 +461,14 @@ int main(int argc, char **argv) {
     // this sets the default module order in case it was not set in a config file
     if(modules->next == NULL) {
         char *default_order[] = {
-            "title",    "separator", "uptime", "separator", "os",  "kernel", "desktop", "shell",  "term",
-            "packages", "separator", "host",   "cpu",       "gpu", "memory", "space",   "colors", "light_colors",
+            "title",     "separator",
+            "user",      "hostname",   "uptime",
+            "separator",
+            "os",        "kernel",     "shell",      "term",
+            "separator",
+            "host",      "bios",       "cpu",        "gpu",
+            "memory",    "pwd",        "date",
+            "space",     "colors",     "light_colors",
         };
 
         for(size_t i = 0; i < sizeof(default_order) / sizeof(default_order[0]); ++i)

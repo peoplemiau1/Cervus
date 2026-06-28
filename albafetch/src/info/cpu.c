@@ -6,6 +6,15 @@
 #include <sys/sysctl.h>
 #endif // __APPLE__
 
+#ifdef __cervus__
+#include <stdint.h>
+static inline void cpuid_leaf(uint32_t leaf, uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx) {
+    __asm__ volatile("cpuid"
+                     : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
+                     : "a"(leaf));
+}
+#endif
+
 #include "info.h"
 #include "../config/config.h"
 #include "../utils/wrappers.h"
@@ -18,7 +27,30 @@ int cpu(char *dest) {
     char freq[24] = "";
     size_t read = 0;
 
-#ifdef __APPLE__
+#ifdef __cervus__
+    uint32_t eax, ebx, ecx, edx;
+    cpuid_leaf(0x80000000, &eax, &ebx, &ecx, &edx);
+    char cpu_brand[49] = "Unknown CPU";
+    if (eax >= 0x80000004) {
+        uint32_t *p = (uint32_t *)cpu_brand;
+        cpuid_leaf(0x80000002, &p[0], &p[1], &p[2],  &p[3]);
+        cpuid_leaf(0x80000003, &p[4], &p[5], &p[6],  &p[7]);
+        cpuid_leaf(0x80000004, &p[8], &p[9], &p[10], &p[11]);
+        cpu_brand[48] = '\0';
+        char *br = cpu_brand;
+        while (*br == ' ') br++;
+        char *out = cpu_brand;
+        while (*br) {
+            if (*br != ' ' || (out > cpu_brand && *(out-1) != ' '))
+                *out++ = *br;
+            br++;
+        }
+        *out = '\0';
+        safeStrncpy(dest, cpu_brand, DEST_SIZE);
+        return RET_OK;
+    }
+    return ERR_NO_INFO;
+#elif defined(__APPLE__)
     size_t BUF_SIZE = DEST_SIZE;
     char buf[BUF_SIZE];
     buf[0] = 0;
@@ -138,7 +170,7 @@ int cpu(char *dest) {
     }
 
     safeStrncpy(dest, cpu_info, DEST_SIZE);
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__cervus__)
     free(buf);
 #endif
 

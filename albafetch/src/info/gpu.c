@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include "../utils/wrappers.h"
+
 #ifdef __APPLE__
 #include <sys/utsname.h>
 #include "../macos/macos_infos.h"
@@ -19,6 +21,10 @@
 
 // get the gpu name(s)
 int gpu(char *dest) {
+#ifdef __cervus__
+    safeStrncpy(dest, "QEMU Standard VGA", DEST_SIZE);
+    return RET_OK;
+#else
     char *gpus[] = {NULL, NULL, NULL};
 
 #ifdef __APPLE__
@@ -83,6 +89,8 @@ int gpu(char *dest) {
             strncat(dest, ", ", DEST_SIZE - strlen(dest));
         strncat(dest, gpus[i], DEST_SIZE - 1 - strlen(dest));
     }
+
+#endif
 
     return RET_OK;
 }

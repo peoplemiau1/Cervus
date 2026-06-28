@@ -21,7 +21,10 @@
 
 // get the machine name and eventually model version
 int host(char *dest) {
-#ifdef __APPLE__
+#ifdef __cervus__
+    safeStrncpy(dest, "QEMU Virtual Machine", DEST_SIZE);
+    return RET_OK;
+#elif defined(__APPLE__)
     size_t BUF_SIZE = DEST_SIZE;
     sysctlbyname("hw.model", dest, &BUF_SIZE, NULL, 0);
 #else
@@ -111,7 +114,7 @@ int host(char *dest) {
     free(name);
     free(version);
 #endif // __ANDROID__
-#endif // __APPLE__
+#endif // closes __cervus__ / __APPLE__ / else
 
     return RET_OK;
 }

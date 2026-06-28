@@ -8,6 +8,10 @@
 
 // get the current BIOS vendor and version (Linux only!)
 int bios(char *dest) {
+#ifdef __cervus__
+    safeStrncpy(dest, "Limine Bootloader", DEST_SIZE);
+    return RET_OK;
+#else
     char *vendor = NULL, *version = NULL;
     FILE *fp = NULL;
     size_t len;
@@ -64,6 +68,8 @@ int bios(char *dest) {
 
     free(vendor);
     free(version);
+
+#endif
 
     return RET_OK;
 }

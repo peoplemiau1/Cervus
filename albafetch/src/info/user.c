@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <pwd.h>
+#include <stdlib.h>
 
 #include "info.h"
 #include "../utils/wrappers.h"
@@ -15,8 +16,15 @@ int user(char *dest) {
     }
 
     pw = getpwuid(uid);
-
-    safeStrncpy(dest, pw->pw_name, DEST_SIZE);
+    if(pw != NULL) {
+        safeStrncpy(dest, pw->pw_name, DEST_SIZE);
+    } else {
+        // fallback
+        char *user_env = getenv("USER");
+        if(!user_env || !user_env[0]) user_env = getenv("LOGNAME");
+        if(!user_env || !user_env[0]) user_env = "root";
+        safeStrncpy(dest, user_env, DEST_SIZE);
+    }
 
     return RET_OK;
 }
